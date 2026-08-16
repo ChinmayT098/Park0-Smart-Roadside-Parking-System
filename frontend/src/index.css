@@ -4,15 +4,13 @@
   --font-heading: 'Poppins', sans-serif;
   --font-body: 'Inter', sans-serif;
 
-  /* Theme colors - Premium SaaS Dashboard Light Theme */
-  --bg-deep: #F8FAFC; /* slate-50 background */
+  --bg-deep: #F8FAFC;
   --bg-space: #FFFFFF;
   --bg-glass: rgba(255, 255, 255, 0.75);
   --bg-glass-hover: rgba(255, 255, 255, 0.95);
   --bg-card: #FFFFFF;
   --bg-input: #FFFFFF;
 
-  /* Primary Blue, Secondary Teal, Accent Amber */
   --primary: #2563EB;
   --primary-hover: #1d4ed8;
   --primary-glow: rgba(37, 99, 235, 0.08);
@@ -30,13 +28,11 @@
   --gradient-dark: linear-gradient(180deg, #F8FAFC 0%, #EFF6FF 100%);
   --gradient-card: #FFFFFF;
 
-  /* Borders & Glows */
   --border-glow: rgba(37, 99, 235, 0.08);
   --border-glow-active: rgba(37, 99, 235, 0.2);
   --border-glass: rgba(0, 0, 0, 0.06);
   --border-input: #E2E8F0;
 
-  /* Status Colors */
   --color-green: #10b981;
   --color-green-glow: rgba(16, 185, 129, 0.08);
   --color-yellow: #f59e0b;
@@ -44,10 +40,9 @@
   --color-red: #ef4444;
   --color-red-glow: rgba(239, 68, 68, 0.08);
 
-  /* Text Colors */
-  --text-primary: #111827; /* Headings */
-  --text-secondary: #4B5563; /* Body */
-  --text-muted: #9CA3AF; /* Muted */
+  --text-primary: #111827; 
+  --text-secondary: #4B5563; 
+  --text-muted: #9CA3AF;
   
   --shadow-glass: 0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -1px rgba(0, 0, 0, 0.02);
   --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.03), 0 2px 4px -2px rgba(0, 0, 0, 0.03), 0 10px 15px -3px rgba(0, 0, 0, 0.05);
@@ -84,7 +79,6 @@ h1, h2, h3, h4, h5, h6 {
   letter-spacing: -0.02em;
 }
 
-/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -100,7 +94,6 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--primary);
 }
 
-/* Premium Layout & Glassmorphism styles */
 .glass-container {
   background: var(--bg-glass);
   backdrop-filter: blur(16px);
@@ -115,7 +108,7 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--bg-card);
   border: 1px solid var(--border-glass);
   box-shadow: var(--shadow-card);
-  border-radius: var(--border-radius-md); /* 16px */
+  border-radius: var(--border-radius-md);
   padding: 1.5rem;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
@@ -144,7 +137,6 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: var(--shadow-card-hover);
 }
 
-/* Glass Inputs & Forms */
 .glass-input {
   width: 100%;
   background: var(--bg-input);
@@ -163,7 +155,6 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
-/* Premium Buttons */
 .btn-primary {
   background: var(--gradient-main);
   border: none;
@@ -197,7 +188,7 @@ h1, h2, h3, h4, h5, h6 {
   padding: 0.8rem 1.6rem;
   font-family: var(--font-heading);
   font-weight: 600;
-  border-radius: var(--border-radius-btn); /* 12px */
+  border-radius: var(--border-radius-btn); 
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   display: inline-flex;
@@ -217,7 +208,6 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateY(0) scale(1);
 }
 
-/* Navbar */
 .navbar {
   display: flex;
   justify-content: space-between;
@@ -264,7 +254,6 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--primary);
 }
 
-/* Glow Dots and Badges */
 .badge {
   padding: 0.25rem 0.75rem;
   border-radius: 50px;
@@ -307,7 +296,6 @@ h1, h2, h3, h4, h5, h6 {
   100% { transform: scale(1.2); opacity: 1; }
 }
 
-/* Premium Animations */
 @keyframes fadeInUp {
   from {
     opacity: 0;
@@ -323,7 +311,6 @@ h1, h2, h3, h4, h5, h6 {
   animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Loading skeletons */
 .skeleton {
   background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%);
   background-size: 200% 100%;
@@ -336,7 +323,6 @@ h1, h2, h3, h4, h5, h6 {
   100% { background-position: -200% 0; }
 }
 
-/* Tables Styling with Zebra striping, rounded container and hover effects */
 .table-container {
   border-radius: var(--border-radius-md);
   overflow: hidden;
@@ -375,7 +361,6 @@ tr:hover td {
   background: #F1F5F9;
 }
 
-/* Text Color Utility Classes */
 .text-primary {
   color: var(--primary) !important;
 }

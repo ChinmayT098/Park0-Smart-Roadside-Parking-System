@@ -35,12 +35,10 @@ const FindParking: React.FC = () => {
   const [vehicleLength, setVehicleLength] = useState(4.5);
   const [paymentMethod, setPaymentMethod] = useState('upi');
   
-  // Checkout & Alert States
   const [isPaying, setIsPaying] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState<any>(null);
   const [bookingError, setBookingError] = useState<any>(null);
 
-  // Vehicle specifications
   const vehicleSpecs = [
     { type: 'Bike', length: 2.0, label: 'Motorcycle / Bike (2.0m)' },
     { type: 'Scooter', length: 2.0, label: 'Scooter (2.0m)' },
@@ -50,7 +48,6 @@ const FindParking: React.FC = () => {
     { type: 'Van', length: 5.5, label: 'Van / Small Commercial (5.5m)' },
   ];
 
-  // Update length when type changes
   const handleVehicleChange = (type: string) => {
     setVehicleType(type);
     const spec = vehicleSpecs.find(v => v.type === type);
@@ -60,15 +57,14 @@ const FindParking: React.FC = () => {
   const fetchShops = async () => {
     setLoading(true);
     try {
-      // Mock latitude/longitude for Bangalore city center
+
       const lat = 12.9716;
       const lng = 77.5946;
       const res = await fetch(`http://localhost:8000/api/shops/nearby?lat=${lat}&lng=${lng}`);
       if (!res.ok) throw new Error('API down');
       const data = await res.json();
       setShops(data);
-      
-      // Keep selected shop updated
+
       if (selectedShop) {
         const updated = data.find((s: ShopParking) => s.id === selectedShop.id);
         if (updated) setSelectedShop(updated);
@@ -129,8 +125,7 @@ const FindParking: React.FC = () => {
           distance: 5.4
         }
       ];
-      
-      // Filter based on search query
+
       const filtered = mockShops.filter(s => 
         s.name.toLowerCase().includes(search.toLowerCase()) || 
         s.address.toLowerCase().includes(search.toLowerCase())
@@ -148,7 +143,7 @@ const FindParking: React.FC = () => {
 
   useEffect(() => {
     fetchShops();
-    // Poll data every 5 seconds for real-time camera updates
+
     const interval = setInterval(fetchShops, 5000);
     return () => clearInterval(interval);
   }, [search]);
@@ -161,8 +156,7 @@ const FindParking: React.FC = () => {
     
     setIsPaying(true);
     setBookingError(null);
-    
-    // Simulate payment loading (UPI/Razorpay sandbox screen)
+
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     try {
@@ -183,20 +177,20 @@ const FindParking: React.FC = () => {
       const data = await response.json();
 
       if (!response.ok) {
-        // Includes suggestion fallback
+
         throw new Error(JSON.stringify(data.detail) || "Booking failed");
       }
 
       setBookingSuccess(data);
       setBookingModal(false);
-      fetchShops(); // Refresh capacities
+      fetchShops();
     } catch (err: any) {
       console.error(err);
       try {
         const parsed = JSON.parse(err.message);
         setBookingError(parsed);
       } catch {
-        // Standalone offline mock success fallback for frontend demonstration
+
         if (selectedShop && selectedShop.remaining_length >= vehicleLength) {
           const mockSuccess = {
             id: Math.floor(Math.random() * 10000),
@@ -209,11 +203,11 @@ const FindParking: React.FC = () => {
           };
           setBookingSuccess(mockSuccess);
           setBookingModal(false);
-          // Locally update shop length for demo consistency
+
           selectedShop.occupied_length += vehicleLength;
           selectedShop.remaining_length -= vehicleLength;
         } else {
-          // Mock error with suggestions
+
           setBookingError({
             message: `Insufficient space! Needs ${vehicleLength}m, only ${selectedShop?.remaining_length}m available.`,
             suggestions: shops.filter(s => s.id !== selectedShop?.id && s.remaining_length >= vehicleLength)
@@ -346,7 +340,7 @@ const FindParking: React.FC = () => {
 
           {/* Map Shop Pins */}
           {shops.map((shop) => {
-            // Position pins based on mock coords
+
             const left = shop.id === 1 ? '20%' : shop.id === 2 ? '45%' : shop.id === 3 ? '70%' : '80%';
             const top = shop.id === 1 ? '40%' : shop.id === 2 ? '25%' : shop.id === 3 ? '55%' : '75%';
             const pinColor = shop.status === 'Green' ? 'var(--color-green)' : shop.status === 'Yellow' ? 'var(--color-yellow)' : 'var(--color-red)';

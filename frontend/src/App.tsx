@@ -2,19 +2,17 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import { Car, LogOut, Key } from 'lucide-react';
 
-// Import Pages
 import Home from './pages/Home';
 import FindParking from './pages/FindParking';
 import ShopPortal from './pages/ShopPortal';
 import AdminPortal from './pages/AdminPortal';
 import MyBookings from './pages/MyBookings';
 
-// Auth Interface
 export interface User {
   id: number;
   email: string;
   name: string;
-  role: string;  // customer, owner, admin
+  role: string;  
   phone?: string;
 }
 
@@ -67,7 +65,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
-// Navbar Component
 const NavigationBar: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();

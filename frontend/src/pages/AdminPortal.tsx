@@ -25,7 +25,6 @@ const AdminPortal: React.FC = () => {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [activeTab, setActiveTab] = useState<'stats' | 'users' | 'logs' | 'settings'>('stats');
   
-  // Platform Settings State
   const [commissionRate, setCommissionRate] = useState(10);
   const [yoloConfLimit, setYoloConfLimit] = useState(35);
   const [enableAlerts, setEnableAlerts] = useState(true);
@@ -45,7 +44,7 @@ const AdminPortal: React.FC = () => {
       const usersData = await usersRes.json();
       if (usersRes.ok) setUsers(usersData);
     } catch {
-      // Mock Admin Dashboard Data fallback
+      
       setAdminStats({
         total_customers: 24,
         total_owners: 8,
