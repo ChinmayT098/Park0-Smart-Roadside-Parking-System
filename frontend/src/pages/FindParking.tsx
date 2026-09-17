@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../App';
 import { Search, MapPin, Navigation, IndianRupee, X, Check, ArrowRight } from 'lucide-react';
+import { formatISTTime } from '../utils/dateUtils';
 
 interface ShopParking {
   id: number;
@@ -660,7 +661,7 @@ const FindParking: React.FC = () => {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Booking Start:</span>
-                <span>{new Date(bookingSuccess.start_time).toLocaleTimeString()}</span>
+                <span>{formatISTTime(bookingSuccess.start_time)}</span>
               </div>
             </div>
 

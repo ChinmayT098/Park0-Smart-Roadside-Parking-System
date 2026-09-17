@@ -134,3 +134,32 @@ class AdminDashboardResponse(BaseModel):
     total_revenue: float
     active_bookings_count: int
     recent_logs: List[CameraLogResponse]
+
+# --- Park0 Vehicle Record Schemas ---
+class VehicleResponse(BaseModel):
+    """
+    Represents a persisted Park0 vehicle record.
+    A record is ONLY created when a valid registration number has been
+    confirmed through the ANPR/OCR pipeline.
+    Fields like registration_number are guaranteed to be a real plate value —
+    never null, "Scanning...", or any placeholder string.
+    """
+    id: int
+    park0_vehicle_id: int         # Daily sequential ID (e.g. 1, 2, 3 …)
+    shop_id: int
+    track_id: Optional[int]       # ByteTrack ID at time of last detection
+    registration_number: str      # Always a validated, non-placeholder plate
+    vehicle_type: str             # Car | Bike | Bus | Truck
+    status: str                   # "active" | "exited"
+    first_detected_at: datetime
+    last_detected_at: datetime
+    date: str                     # YYYY-MM-DD (local shop date)
+
+    class Config:
+        from_attributes = True
+
+class VehicleStatsResponse(BaseModel):
+    """Dashboard stats derived exclusively from confirmed persisted vehicles."""
+    total_today: int        # All valid vehicle records for today
+    currently_active: int   # Vehicles with status == "active"
+    exited_today: int       # Vehicles with status == "exited"

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../App';
 import { Clock, Navigation, XCircle, Calendar, RefreshCcw, MapPin } from 'lucide-react';
+import { formatISTTime, formatISTDate } from '../utils/dateUtils';
 
 interface Booking {
   id: number;
@@ -180,7 +181,7 @@ const MyBookings: React.FC = () => {
                       </div>
                       <div>
                         <span style={{ color: 'var(--text-secondary)' }}>Started At:</span>
-                        <div style={{ fontWeight: 600 }}>{new Date(booking.start_time).toLocaleTimeString()}</div>
+                        <div style={{ fontWeight: 600 }}>{formatISTTime(booking.start_time)}</div>
                       </div>
                       <div>
                         <span style={{ color: 'var(--text-secondary)' }}>Transaction ID:</span>
@@ -244,9 +245,9 @@ const MyBookings: React.FC = () => {
                         </td>
                         <td>{booking.vehicle_type} ({booking.vehicle_length}m)</td>
                         <td>
-                          {new Date(booking.start_time).toLocaleDateString()}
+                          {formatISTDate(booking.start_time)}
                           <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            {new Date(booking.start_time).toLocaleTimeString()}
+                            {formatISTTime(booking.start_time)}
                           </span>
                         </td>
                         <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>₹{booking.total_price}</td>

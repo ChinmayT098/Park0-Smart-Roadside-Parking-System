@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../App';
-import { LayoutDashboard, Wallet, Camera, Power, Plus, TrendingUp, IndianRupee, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
+import { LayoutDashboard, Wallet, Camera, Power, Plus, TrendingUp, IndianRupee, ArrowDownLeft, ArrowUpRight, Car, CheckCircle, Clock } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { formatISTTime, formatISTDate } from '../utils/dateUtils';
 
 interface Shop {
   id: number;
@@ -12,13 +13,36 @@ interface Shop {
   is_enabled: boolean;
 }
 
+// A Park0 vehicle record â€” only exists when a valid plate has been confirmed.
+interface VehicleRecord {
+  id: number;
+  park0_vehicle_id: number;
+  shop_id: number;
+  track_id: number | null;
+  registration_number: string; // always a real plate â€” never "Scanning..."
+  vehicle_type: string;
+  status: string;              // "active" | "exited"
+  first_detected_at: string;
+  last_detected_at: string;
+  date: string;
+}
+
+interface VehicleStats {
+  total_today: number;
+  currently_active: number;
+  exited_today: number;
+}
+
 const ShopPortal: React.FC = () => {
   const { token } = useAuth();
 
   // Shop states
   const [shops, setShops] = useState<Shop[]>([]);
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
-  
+
+  // Tab navigation: 'camera' | 'vehicles'
+  const [activeTab, setActiveTab] = useState<'camera' | 'vehicles'>('camera');
+
   // Shop Registration Form
   const [showRegForm, setShowRegForm] = useState(false);
   const [shopName, setShopName] = useState('');
@@ -31,12 +55,12 @@ const ShopPortal: React.FC = () => {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawSuccess, setWithdrawSuccess] = useState(false);
   const [withdrawError, setWithdrawError] = useState('');
-  
+
   // Camera WebSocket state
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraStats, setCameraStats] = useState<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  
+
   // Webcam & Error states
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string>('');
@@ -45,6 +69,12 @@ const ShopPortal: React.FC = () => {
   const cameraActiveRef = useRef<boolean>(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isProcessingRef = useRef<boolean>(false);
+
+  // Vehicles tab state â€” only confirmed, plate-identified vehicles
+  const [vehicleRecords, setVehicleRecords] = useState<VehicleRecord[]>([]);
+  const [vehicleStats, setVehicleStats] = useState<VehicleStats | null>(null);
+  const [vehiclesLoading, setVehiclesLoading] = useState(false);
+  const vehiclePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -402,11 +432,15 @@ const ShopPortal: React.FC = () => {
     const scaleY = canvas.height / 480;
 
     vehicles.forEach((v) => {
-      let color = '#B464FF'; // default purple
-      if (v.type === 'Car') color = '#3B82F6'; // blue
-      else if (v.type === 'Bike') color = '#10B981'; // green
-      else if (v.type === 'Bus') color = '#EC4899'; // pink
-      else if (v.type === 'Truck') color = '#F59E0B'; // amber
+      // Confirmed vehicles (plate identified) get a distinct colour; unidentified get grey
+      let color = '#6B7280'; // grey for unidentified
+      if (v.park0_vehicle_id !== null && v.park0_vehicle_id !== undefined) {
+        if (v.type === 'Car') color = '#3B82F6';        // blue
+        else if (v.type === 'Bike') color = '#10B981';  // green
+        else if (v.type === 'Bus') color = '#EC4899';   // pink
+        else if (v.type === 'Truck') color = '#F59E0B'; // amber
+        else color = '#B464FF';                         // purple
+      }
 
       const x = v.x * scaleX;
       const y = v.y * scaleY;
@@ -417,17 +451,79 @@ const ShopPortal: React.FC = () => {
       ctx.lineWidth = 3;
       ctx.strokeRect(x, y, w, h);
 
-      const label = `${v.type} ${v.confidence}%`;
-      ctx.font = 'bold 12px Inter, sans-serif';
-      
+      // Label: show Park0 Vehicle ID only when plate has been confirmed.
+      // Unidentified vehicles show type + confidence only â€” no Vehicle ID, no plate.
+      let label: string;
+      if (v.park0_vehicle_id !== null && v.park0_vehicle_id !== undefined) {
+        label = `Vehicle ${v.park0_vehicle_id} | ${v.type} | ${v.plate_number}`;
+      } else {
+        label = `${v.type} ${v.confidence}% | Identifyingâ€¦`;
+      }
+
+      ctx.font = 'bold 11px Inter, sans-serif';
       const textWidth = ctx.measureText(label).width;
       ctx.fillStyle = color;
-      ctx.fillRect(x - 1, y - 18, textWidth + 10, 18);
+      ctx.fillRect(x - 1, y - 20, textWidth + 12, 20);
 
       ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(label, x + 4, y - 5);
+      ctx.fillText(label, x + 5, y - 6);
     });
   };
+
+  // -------------------------------------------------------------------
+  // Vehicles tab data fetching
+  // -------------------------------------------------------------------
+  const fetchVehicleRecords = useCallback(async () => {
+    if (!selectedShop || !token) return;
+    setVehiclesLoading(true);
+    try {
+      const [recordsRes, statsRes] = await Promise.all([
+        fetch(`http://127.0.0.1:8000/api/owner/vehicles/${selectedShop.id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }),
+        fetch(`http://127.0.0.1:8000/api/owner/vehicles/${selectedShop.id}/stats`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ]);
+      if (recordsRes.ok) {
+        const records: VehicleRecord[] = await recordsRes.json();
+        // Client-side safety filter: never display records with placeholder plates
+        const placeholders = new Set(['scanning...', 'scanning', 'unknown', 'n/a', 'not detected', 'none', '']);
+        setVehicleRecords(records.filter(r =>
+          r.registration_number &&
+          !placeholders.has(r.registration_number.toLowerCase().trim())
+        ));
+      }
+      if (statsRes.ok) {
+        setVehicleStats(await statsRes.json());
+      }
+    } catch {
+      // Backend offline â€” show empty state (no mock data: do not fake vehicle records)
+      setVehicleRecords([]);
+      setVehicleStats(null);
+    } finally {
+      setVehiclesLoading(false);
+    }
+  }, [selectedShop, token]);
+
+  // Poll when the Vehicles tab is active
+  useEffect(() => {
+    if (activeTab === 'vehicles' && selectedShop) {
+      fetchVehicleRecords();
+      vehiclePollRef.current = setInterval(fetchVehicleRecords, 5000);
+    } else {
+      if (vehiclePollRef.current) {
+        clearInterval(vehiclePollRef.current);
+        vehiclePollRef.current = null;
+      }
+    }
+    return () => {
+      if (vehiclePollRef.current) {
+        clearInterval(vehiclePollRef.current);
+        vehiclePollRef.current = null;
+      }
+    };
+  }, [activeTab, selectedShop, fetchVehicleRecords]);
 
   useEffect(() => {
     return () => {
@@ -437,7 +533,7 @@ const ShopPortal: React.FC = () => {
 
   return (
     <div style={{ padding: '2rem 5%', minHeight: 'calc(100vh - 73px)' }}>
-      
+
       {/* HEADER SECTION */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <div>
@@ -447,21 +543,49 @@ const ShopPortal: React.FC = () => {
 
         <div style={{ display: 'flex', gap: '1rem' }}>
           {selectedShop && (
-            <button 
-              onClick={toggleParkingStatus} 
-              className={selectedShop.is_enabled ? "btn-secondary" : "btn-primary"}
+            <button
+              onClick={toggleParkingStatus}
+              className={selectedShop.is_enabled ? 'btn-secondary' : 'btn-primary'}
               style={{ borderColor: selectedShop.is_enabled ? 'var(--color-green)' : 'rgba(255,255,255,0.07)' }}
             >
               <Power size={18} style={{ color: selectedShop.is_enabled ? 'var(--color-green)' : 'white' }} />
-              {selectedShop.is_enabled ? "Disable Parking Bay" : "Enable Parking Bay"}
+              {selectedShop.is_enabled ? 'Disable Parking Bay' : 'Enable Parking Bay'}
             </button>
           )}
-
           <button onClick={() => setShowRegForm(true)} className="btn-primary">
             <Plus size={18} />
             Register Shop
           </button>
         </div>
+      </div>
+
+      {/* TAB NAVIGATION */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '0' }}>
+        {([
+          { key: 'camera', label: 'AI Camera & Analytics', icon: <Camera size={16} /> },
+          { key: 'vehicles', label: `Vehicles Today${vehicleStats ? ` (${vehicleStats.total_today})` : ''}`, icon: <Car size={16} /> }
+        ] as const).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.4rem',
+              padding: '0.65rem 1.2rem',
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent',
+              color: activeTab === tab.key ? 'var(--primary)' : 'var(--text-secondary)',
+              fontWeight: activeTab === tab.key ? 700 : 400,
+              fontSize: '0.9rem',
+              cursor: 'pointer',
+              transition: 'color 0.2s, border-color 0.2s',
+              marginBottom: '-1px'
+            }}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* SHOP SELECTOR */}
@@ -532,8 +656,8 @@ const ShopPortal: React.FC = () => {
         </div>
       )}
 
-      {/* CONTENT GRID */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '2rem' }}>
+      {/* CONTENT GRID â€” only shown when Camera tab is active */}
+      {activeTab === 'camera' && <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '2rem' }}>
         
         {/* LEFT COLUMN: LIVE AI CAMERA VIDEO FEED */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -675,10 +799,27 @@ const ShopPortal: React.FC = () => {
               <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>AI Vehicle Log (Real-time)</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
                 {cameraStats.vehicles.map((v: any, idx: number) => (
-                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 1rem', background: '#F8FAFC', border: '1px solid var(--border-glass)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                    <span style={{ fontWeight: 600 }}>{v.type}</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>Physical length mapping: {v.length}m</span>
-                    <span style={{ color: 'var(--primary)' }}>Confidence: {v.confidence}%</span>
+                  <div key={idx} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '0.6rem 1rem',
+                    background: v.park0_vehicle_id != null ? 'rgba(59,130,246,0.06)' : 'rgba(107,114,128,0.06)',
+                    border: `1px solid ${v.park0_vehicle_id != null ? 'rgba(59,130,246,0.2)' : 'var(--border-glass)'}`,
+                    borderRadius: '8px', fontSize: '0.85rem'
+                  }}>
+                    <span style={{ fontWeight: 600, minWidth: '80px' }}>
+                      {v.park0_vehicle_id != null ? `Vehicle ${v.park0_vehicle_id}` : 'Unidentified'}
+                    </span>
+                    <span style={{ color: 'var(--text-secondary)' }}>{v.type} Â· {v.length}m</span>
+                    {v.park0_vehicle_id != null ? (
+                      <span style={{ color: 'var(--primary)', fontWeight: 600, fontFamily: 'monospace' }}>
+                        {v.plate_number}
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.78rem' }}>
+                        Identifying plateâ€¦
+                      </span>
+                    )}
+                    <span style={{ color: 'var(--text-muted)' }}>{v.confidence}%</span>
                   </div>
                 ))}
               </div>
@@ -688,7 +829,7 @@ const ShopPortal: React.FC = () => {
 
         {/* RIGHT COLUMN: WALLET CASH-OUT & CHART */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          
+
           {/* ANALYTICS GRAPH */}
           {dashboardData && (
             <div className="glass-card" style={{ padding: '1.5rem' }}>
@@ -734,10 +875,10 @@ const ShopPortal: React.FC = () => {
 
               <form onSubmit={handleWithdraw} style={{ display: 'flex', gap: '0.8rem' }}>
                 <div style={{ position: 'relative', flex: 1 }}>
-                  <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}>₹</span>
-                  <input 
-                    type="number" 
-                    placeholder="Enter amount to withdraw..." 
+                  <span style={{ position: 'absolute', left: '0.8rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }}>â‚¹</span>
+                  <input
+                    type="number"
+                    placeholder="Enter amount to withdraw..."
                     className="glass-input"
                     style={{ paddingLeft: '1.8rem' }}
                     value={withdrawAmount}
@@ -768,11 +909,11 @@ const ShopPortal: React.FC = () => {
                         {tx.type === 'earnings' ? 'Parking Booking Revenue' : 'Bank Account Withdrawal'}
                       </div>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                        {new Date(tx.created_at).toLocaleDateString()} at {new Date(tx.created_at).toLocaleTimeString()}
+                        {formatISTDate(tx.created_at)} at {formatISTTime(tx.created_at)}
                       </span>
                     </div>
                     <strong style={{ fontSize: '1rem', color: tx.amount > 0 ? 'var(--color-green)' : 'var(--text-primary)' }}>
-                      {tx.amount > 0 ? '+' : ''}₹{tx.amount}
+                      {tx.amount > 0 ? '+' : ''}â‚¹{tx.amount}
                     </strong>
                   </div>
                 ))}
@@ -780,7 +921,171 @@ const ShopPortal: React.FC = () => {
             </div>
           )}
         </div>
-      </div>
+      </div>}
+
+      {/* ================================================================
+          VEHICLES TAB â€” only shown when activeTab === 'vehicles'
+          Displays ONLY confirmed, plate-identified Park0 vehicle records.
+          ByteTrack detections without a valid plate NEVER appear here.
+          ================================================================ */}
+      {activeTab === 'vehicles' && (
+        <div style={{ marginTop: '-0.5rem' }}>
+
+          {/* VEHICLE STATS CARDS */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+
+            <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{ padding: '0.8rem', background: 'var(--primary-glow)', borderRadius: '12px', color: 'var(--primary)' }}>
+                <Car size={24} />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>TOTAL VEHICLES TODAY</div>
+                <strong style={{ fontSize: '1.6rem', color: 'var(--text-primary)' }}>
+                  {vehicleStats ? vehicleStats.total_today : 'â€”'}
+                </strong>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>plate-confirmed only</div>
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{ padding: '0.8rem', background: 'var(--color-green-glow)', borderRadius: '12px', color: 'var(--color-green)' }}>
+                <CheckCircle size={24} />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>CURRENTLY ACTIVE</div>
+                <strong style={{ fontSize: '1.6rem', color: 'var(--color-green)' }}>
+                  {vehicleStats ? vehicleStats.currently_active : 'â€”'}
+                </strong>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>still parked</div>
+              </div>
+            </div>
+
+            <div className="glass-card" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{ padding: '0.8rem', background: 'var(--secondary-glow)', borderRadius: '12px', color: 'var(--secondary)' }}>
+                <Clock size={24} />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>EXITED TODAY</div>
+                <strong style={{ fontSize: '1.6rem', color: 'var(--text-primary)' }}>
+                  {vehicleStats ? vehicleStats.exited_today : 'â€”'}
+                </strong>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>departed</div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* VEHICLE TABLE */}
+          <div className="glass-card" style={{ padding: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
+              <h3 style={{ fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Car size={18} className="text-primary" />
+                Identified Vehicles — {formatISTDate(new Date())}
+              </h3>
+              <button
+                onClick={fetchVehicleRecords}
+                className="btn-secondary"
+                style={{ padding: '0.4rem 0.9rem', fontSize: '0.8rem' }}
+                disabled={vehiclesLoading}
+              >
+                {vehiclesLoading ? 'Refreshingâ€¦' : 'Refresh'}
+              </button>
+            </div>
+
+            {!selectedShop ? (
+              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                <Car size={48} style={{ margin: '0 auto 1rem', opacity: 0.3 }} />
+                <p>Please register a shop to view vehicle records.</p>
+              </div>
+            ) : vehiclesLoading && vehicleRecords.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                <p>Loading vehicle recordsâ€¦</p>
+              </div>
+            ) : vehicleRecords.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                <Car size={48} style={{ margin: '0 auto 1rem', opacity: 0.3 }} />
+                <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>No identified vehicles yet today.</p>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                  Vehicles only appear here after their license plate has been confirmed by the ANPR system.
+                </p>
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--border-glass)' }}>
+                      {['Vehicle ID', 'Registration', 'Type', 'Status', 'First Seen', 'Last Seen'].map(h => (
+                        <th key={h} style={{ textAlign: 'left', padding: '0.6rem 0.8rem', color: 'var(--text-secondary)', fontWeight: 600, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {vehicleRecords.map((v) => (
+                      <tr
+                        key={v.id}
+                        style={{
+                          borderBottom: '1px solid var(--border-glass)',
+                          transition: 'background 0.15s'
+                        }}
+                        onMouseEnter={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.04)')}
+                        onMouseLeave={e => (e.currentTarget.style.background = '')}
+                      >
+                        <td style={{ padding: '0.75rem 0.8rem', fontWeight: 700, color: 'var(--primary)' }}>
+                          Vehicle {v.park0_vehicle_id}
+                        </td>
+                        <td style={{ padding: '0.75rem 0.8rem', fontFamily: 'monospace', fontWeight: 600, letterSpacing: '0.06em' }}>
+                          {v.registration_number}
+                        </td>
+                        <td style={{ padding: '0.75rem 0.8rem' }}>
+                          <span style={{
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '999px',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            background: v.vehicle_type === 'Car' ? 'rgba(59,130,246,0.12)' :
+                                        v.vehicle_type === 'Bike' ? 'rgba(16,185,129,0.12)' :
+                                        v.vehicle_type === 'Bus' ? 'rgba(236,72,153,0.12)' :
+                                        'rgba(245,158,11,0.12)',
+                            color: v.vehicle_type === 'Car' ? '#3B82F6' :
+                                   v.vehicle_type === 'Bike' ? '#10B981' :
+                                   v.vehicle_type === 'Bus' ? '#EC4899' : '#F59E0B'
+                          }}>
+                            {v.vehicle_type}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem 0.8rem' }}>
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '999px',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                            background: v.status === 'active' ? 'var(--color-green-glow)' : 'rgba(107,114,128,0.1)',
+                            color: v.status === 'active' ? 'var(--color-green)' : 'var(--text-secondary)'
+                          }}>
+                            {v.status === 'active' ? (
+                              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-green)', display: 'inline-block' }} />
+                            ) : (
+                              <Clock size={10} />
+                            )}
+                            {v.status === 'active' ? 'Active' : 'Exited'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.75rem 0.8rem', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                          {formatISTTime(v.first_detected_at)}
+                        </td>
+                        <td style={{ padding: '0.75rem 0.8rem', color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                          {formatISTTime(v.last_detected_at)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* REGISTRATION MODAL */}
       {showRegForm && (
@@ -839,7 +1144,7 @@ const ShopPortal: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.4rem', display: 'block' }}>Price per Hour (₹)</label>
+                  <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.4rem', display: 'block' }}>Price per Hour (â‚¹)</label>
                   <input 
                     type="number" 
                     required 
@@ -862,3 +1167,4 @@ const ShopPortal: React.FC = () => {
 };
 
 export default ShopPortal;
+

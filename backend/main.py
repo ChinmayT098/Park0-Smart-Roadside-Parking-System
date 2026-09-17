@@ -3,7 +3,7 @@ import uvicorn
 import random
 from fastapi import FastAPI, Depends, HTTPException, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import List, Dict, Any, Optional
 import json
 import asyncio
@@ -13,6 +13,7 @@ from backend.database import get_async_db, async_db, sync_db, get_next_sequence_
 from backend.models import clean_doc, clean_docs
 from backend import schemas, auth
 from backend.detector import AICameraDetector, VEHICLE_LENGTHS
+from backend.timezone import get_ist_now, get_ist_date_str, IST
 
 app = FastAPI(title="Park0 API", description="AI-powered Smart Roadside Parking Management API (Multi-Collection MongoDB Atlas)")
 
@@ -25,9 +26,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from backend.cleanup_invalid_vehicles import cleanup_invalid_vehicle_records
+
 # Global map of active camera detectors: {shop_id: AICameraDetector}
 active_detectors: Dict[int, AICameraDetector] = {}
 detectors_lock = asyncio.Lock()
+
+@app.on_event("startup")
+async def startup_db_cleanup():
+    """Purges any legacy invalid 'Scanning...' vehicle records on backend startup."""
+    try:
+        cleanup_invalid_vehicle_records()
+    except Exception as e:
+        print(f"[Startup Cleanup Warning] {e}")
+
 
 async def get_shop_occupied_length(db, shop: dict) -> float:
     """
@@ -43,8 +55,12 @@ async def get_shop_occupied_length(db, shop: dict) -> float:
     else:
         # Fallback to database camera log (if recorded within the last 5 minutes)
         latest_log = await db["camera_logs"].find_one({"shop_id": shop_id}, sort=[("timestamp", -1)])
-        if latest_log and (datetime.utcnow() - latest_log["timestamp"]) < timedelta(minutes=5):
-            camera_occupied = latest_log.get("occupied_length", 0.0)
+        if latest_log:
+            log_time = latest_log["timestamp"]
+            if log_time.tzinfo is None:
+                log_time = log_time.replace(tzinfo=IST)
+            if (get_ist_now() - log_time) < timedelta(minutes=5):
+                camera_occupied = latest_log.get("occupied_length", 0.0)
 
     # 2. Get sum of active bookings
     active_bookings = await db["bookings"].find({
@@ -86,7 +102,7 @@ async def register(user_data: schemas.UserCreate, db = Depends(get_async_db)):
         "name": user_data.name,
         "phone": user_data.phone,
         "role": user_data.role,
-        "created_at": datetime.utcnow()
+        "created_at": get_ist_now()
     }
     await db[target_collection].insert_one(user_doc)
     return clean_doc(user_doc)
@@ -121,7 +137,7 @@ async def create_shop(shop_data: schemas.ShopCreate, current_user: dict = Depend
         "total_length": shop_data.total_length,
         "price_per_hour": shop_data.price_per_hour,
         "is_enabled": True,
-        "created_at": datetime.utcnow()
+        "created_at": get_ist_now()
     }
     await db["shops"].insert_one(shop_doc)
     return clean_doc(shop_doc)
@@ -223,7 +239,8 @@ async def create_booking(booking_data: schemas.BookingCreate, current_user: dict
         )
 
     # Simulated checkout creation (payments success mock)
-    payment_id = f"pay_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{random.randint(1000, 9999)}"
+    now_ist = get_ist_now()
+    payment_id = f"pay_{now_ist.strftime('%Y%m%d%H%M%S')}_{random.randint(1000, 9999)}"
     price = shop["price_per_hour"] * 2.0
     
     booking_id = await get_next_sequence_value("bookings")
@@ -233,13 +250,13 @@ async def create_booking(booking_data: schemas.BookingCreate, current_user: dict
         "shop_id": shop["id"],
         "vehicle_type": booking_data.vehicle_type,
         "vehicle_length": requested_length,
-        "start_time": datetime.utcnow(),
+        "start_time": now_ist,
         "end_time": None,
         "status": "active",
         "total_price": price,
         "payment_status": "paid",  # Auto paid for simulation
         "payment_id": payment_id,
-        "created_at": datetime.utcnow()
+        "created_at": now_ist
     }
     await db["bookings"].insert_one(booking_doc)
     
@@ -251,7 +268,7 @@ async def create_booking(booking_data: schemas.BookingCreate, current_user: dict
         "amount": price,
         "type": "earnings",
         "status": "completed",
-        "created_at": datetime.utcnow()
+        "created_at": now_ist
     }
     await db["wallet_transactions"].insert_one(wallet_doc)
     
@@ -274,7 +291,7 @@ async def cancel_booking(booking_id: int, current_user: dict = Depends(auth.get_
     if booking["status"] != "active":
         raise HTTPException(status_code=400, detail="Only active bookings can be cancelled")
 
-    end_time = datetime.utcnow()
+    end_time = get_ist_now()
     await db["bookings"].update_one(
         {"id": booking_id},
         {"$set": {"status": "cancelled", "end_time": end_time}}
@@ -291,7 +308,7 @@ async def cancel_booking(booking_id: int, current_user: dict = Depends(auth.get_
         "amount": -booking["total_price"],
         "type": "withdrawal",
         "status": "completed",
-        "created_at": datetime.utcnow()
+        "created_at": get_ist_now()
     }
     await db["wallet_transactions"].insert_one(refund_doc)
     
@@ -339,11 +356,36 @@ async def get_owner_dashboard(current_user: dict = Depends(auth.require_role("ow
     txs = await db["wallet_transactions"].find({"owner_id": current_user["id"]}).to_list(1000)
     balance = sum([t["amount"] for t in txs if t.get("status") == "completed"])
     
-    today = datetime.utcnow().date()
-    start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    now_ist = get_ist_now()
+    today = now_ist.date()
+    start_of_month = now_ist.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    today_earnings = sum([t["amount"] for t in txs if t["created_at"].date() == today and t.get("type") == "earnings"])
-    monthly_earnings = sum([t["amount"] for t in txs if t["created_at"] >= start_of_month and t.get("type") == "earnings"])
+    def get_tx_date(t):
+        dt = t.get("created_at")
+        if dt is None:
+            return None
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=IST)
+        else:
+            dt = dt.astimezone(IST)
+        return dt.date()
+
+    def get_tx_dt(t):
+        dt = t.get("created_at")
+        if dt is None:
+            return None
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=IST)
+        else:
+            dt = dt.astimezone(IST)
+        return dt
+
+    today_earnings = sum([t["amount"] for t in txs if get_tx_date(t) == today and t.get("type") == "earnings"])
+    monthly_earnings = sum([t["amount"] for t in txs if get_tx_dt(t) and get_tx_dt(t) >= start_of_month and t.get("type") == "earnings"])
     
     active_bookings_count = 0
     total_len = 0.0
@@ -364,9 +406,10 @@ async def get_owner_dashboard(current_user: dict = Depends(auth.require_role("ow
     
     analytics = []
     for i in range(7):
-        day = (datetime.utcnow() - timedelta(days=6-i)).strftime("%a")
-        day_date = (datetime.utcnow() - timedelta(days=6-i)).date()
-        day_earnings = sum([t["amount"] for t in txs if t["created_at"].date() == day_date and t.get("type") == "earnings"])
+        day_obj = now_ist - timedelta(days=6-i)
+        day = day_obj.strftime("%a")
+        day_date = day_obj.date()
+        day_earnings = sum([t["amount"] for t in txs if get_tx_date(t) == day_date and t.get("type") == "earnings"])
         analytics.append({"name": day, "revenue": day_earnings, "occupancy": random.randint(20, 85) if shop_ids else 0})
 
     recent_txs = await db["wallet_transactions"].find({
@@ -403,7 +446,7 @@ async def withdraw_earnings(withdrawal_data: schemas.WalletWithdraw, current_use
         "amount": -withdrawal_data.amount,
         "type": "withdrawal",
         "status": "completed",
-        "created_at": datetime.utcnow()
+        "created_at": get_ist_now()
     }
     await db["wallet_transactions"].insert_one(withdrawal_doc)
     return {"message": "Withdrawal successful", "withdrawn": withdrawal_data.amount, "new_balance": balance - withdrawal_data.amount}
@@ -441,6 +484,90 @@ async def get_all_users(current_user: dict = Depends(auth.require_role("admin"))
     admins = await db["admins"].find({}).to_list(1000)
     all_users = clean_docs(users) + clean_docs(owners) + clean_docs(admins)
     return all_users
+
+
+# --- PARK0 VEHICLE RECORDS (plate-confirmed vehicles only) ---
+
+@app.get("/api/owner/vehicles/{shop_id}", response_model=List[schemas.VehicleResponse])
+async def get_shop_vehicles(
+    shop_id: int,
+    current_user: dict = Depends(auth.require_role("owner")),
+    db = Depends(get_async_db)
+):
+    """
+    Returns all confirmed Park0 vehicle records for a shop for today.
+
+    IMPORTANT: This endpoint ONLY returns vehicles that have a valid,
+    confirmed registration number from the ANPR/OCR pipeline.
+    Vehicles tracked by ByteTrack that never had a plate confirmed will
+    NEVER appear here — they are never written to the vehicles collection.
+    """
+    # Verify shop belongs to this owner
+    shop = await db["shops"].find_one({"id": shop_id})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    if shop["owner_id"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    today_str = get_ist_date_str()
+
+    # Query: only records with a real registration_number, for this shop, today.
+    # The DB constraint (set at insert time in detector.py) guarantees that no
+    # placeholder values exist, but we add a server-side filter as a second layer.
+    vehicles = await db["vehicles"].find({
+        "shop_id": shop_id,
+        "date": today_str,
+        # Explicit guard: never return records with missing/empty registration
+        "registration_number": {"$exists": True, "$ne": "", "$ne": None}
+    }).sort("park0_vehicle_id", 1).to_list(1000)
+
+    # Final application-layer filter to strip any legacy edge-case records
+    from backend.anpr import is_valid_plate
+    valid_vehicles = [v for v in vehicles if is_valid_plate(v.get("registration_number"))]
+
+    return clean_docs(valid_vehicles)
+
+
+@app.get("/api/owner/vehicles/{shop_id}/stats", response_model=schemas.VehicleStatsResponse)
+async def get_shop_vehicle_stats(
+    shop_id: int,
+    current_user: dict = Depends(auth.require_role("owner")),
+    db = Depends(get_async_db)
+):
+    """
+    Returns vehicle counts for the Shopkeeper Dashboard stat cards.
+
+    All counts are derived exclusively from confirmed, plate-identified vehicles.
+    Unidentified ByteTrack detections do NOT contribute to any counter here.
+    """
+    shop = await db["shops"].find_one({"id": shop_id})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    if shop["owner_id"] != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    today_str = get_ist_date_str()
+
+    from backend.anpr import is_valid_plate
+
+    all_today = await db["vehicles"].find({
+        "shop_id": shop_id,
+        "date": today_str,
+        "registration_number": {"$exists": True, "$ne": "", "$ne": None}
+    }).to_list(1000)
+
+    # Application-layer validation guard
+    valid = [v for v in all_today if is_valid_plate(v.get("registration_number"))]
+
+    total_today = len(valid)
+    currently_active = sum(1 for v in valid if v.get("status") == "active")
+    exited_today = sum(1 for v in valid if v.get("status") == "exited")
+
+    return {
+        "total_today": total_today,
+        "currently_active": currently_active,
+        "exited_today": exited_today
+    }
 
 
 # --- WEBSOCKET LIVE CAMERA STREAM & STATS SYNC ---

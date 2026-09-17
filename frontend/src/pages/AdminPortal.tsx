@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../App';
 import { Shield, ClipboardList, Server, Settings, Activity } from 'lucide-react';
+import { formatISTTime, formatISTDate } from '../utils/dateUtils';
 
 interface UserItem {
   id: number;
@@ -176,7 +177,7 @@ const AdminPortal: React.FC = () => {
                     <div>
                       <strong style={{ fontSize: '0.9rem', color: 'var(--text-primary)' }}>Shop Frontage #{log.shop_id}</strong>
                       <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {new Date(log.timestamp).toLocaleTimeString()}
+                        {formatISTTime(log.timestamp)}
                       </span>
                     </div>
                     <div style={{ textAlign: 'right' }}>
@@ -244,7 +245,7 @@ const AdminPortal: React.FC = () => {
                     </span>
                   </td>
                   <td>
-                    {new Date(user.created_at).toLocaleDateString()}
+                    {formatISTDate(user.created_at)}
                   </td>
                 </tr>
               ))}
@@ -270,7 +271,7 @@ const AdminPortal: React.FC = () => {
                   Detections: {log.detected_vehicles.map(v => `${v.type} (${Math.round(v.confidence*100)}%)`).join(', ') || 'No vehicle present'}
                 </span>
                 <span style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
-                  {new Date(log.timestamp).toLocaleTimeString()}
+                  {formatISTTime(log.timestamp)}
                 </span>
               </div>
             ))}
