@@ -576,7 +576,7 @@ class AICameraDetector:
                 "detected_vehicles": detected,
                 "occupied_length": occupied,
                 "remaining_length": remaining,
-                "timestamp": datetime.utcnow()
+                "timestamp": get_ist_now()
             }
             sync_db["camera_logs"].insert_one(log_doc)
         except Exception as e:

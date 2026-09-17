@@ -13,7 +13,7 @@ from backend.database import get_async_db, async_db, sync_db, get_next_sequence_
 from backend.models import clean_doc, clean_docs
 from backend import schemas, auth
 from backend.detector import AICameraDetector, VEHICLE_LENGTHS
-from backend.timezone import get_ist_now, get_ist_date_str, IST
+from backend.timezone import get_ist_now, get_ist_date_str, to_ist, IST
 
 app = FastAPI(title="Park0 API", description="AI-powered Smart Roadside Parking Management API (Multi-Collection MongoDB Atlas)")
 
@@ -56,10 +56,8 @@ async def get_shop_occupied_length(db, shop: dict) -> float:
         # Fallback to database camera log (if recorded within the last 5 minutes)
         latest_log = await db["camera_logs"].find_one({"shop_id": shop_id}, sort=[("timestamp", -1)])
         if latest_log:
-            log_time = latest_log["timestamp"]
-            if log_time.tzinfo is None:
-                log_time = log_time.replace(tzinfo=IST)
-            if (get_ist_now() - log_time) < timedelta(minutes=5):
+            log_time = to_ist(latest_log.get("timestamp"))
+            if log_time and (get_ist_now() - log_time) < timedelta(minutes=5):
                 camera_occupied = latest_log.get("occupied_length", 0.0)
 
     # 2. Get sum of active bookings
@@ -361,28 +359,11 @@ async def get_owner_dashboard(current_user: dict = Depends(auth.require_role("ow
     start_of_month = now_ist.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     def get_tx_date(t):
-        dt = t.get("created_at")
-        if dt is None:
-            return None
-        if isinstance(dt, str):
-            dt = datetime.fromisoformat(dt)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=IST)
-        else:
-            dt = dt.astimezone(IST)
-        return dt.date()
+        dt = to_ist(t.get("created_at"))
+        return dt.date() if dt else None
 
     def get_tx_dt(t):
-        dt = t.get("created_at")
-        if dt is None:
-            return None
-        if isinstance(dt, str):
-            dt = datetime.fromisoformat(dt)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=IST)
-        else:
-            dt = dt.astimezone(IST)
-        return dt
+        return to_ist(t.get("created_at"))
 
     today_earnings = sum([t["amount"] for t in txs if get_tx_date(t) == today and t.get("type") == "earnings"])
     monthly_earnings = sum([t["amount"] for t in txs if get_tx_dt(t) and get_tx_dt(t) >= start_of_month and t.get("type") == "earnings"])
